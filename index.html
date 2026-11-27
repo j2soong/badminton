@@ -261,7 +261,7 @@ td.r,th.r{text-align:right}
 
 /* ===== 하단 탭 ===== */
 .nav{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);box-shadow:var(--hair-top);padding-bottom:env(safe-area-inset-bottom,0px)}
-.nav-in{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr)}
+.nav-in{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr)}
 .nav button{border:none;background:none;min-height:56px;font-size:12px;font-weight:500;color:var(--c150);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
 .nav button svg{width:22px;height:22px;stroke-width:1.5}
 .nav button[aria-current="page"]{color:var(--c000);font-weight:600}
@@ -298,6 +298,14 @@ td.r,th.r{text-align:right}
 .level-pick button[aria-pressed="true"]{background:var(--c000);color:var(--c999);border-color:var(--c000)}
 .err{color:var(--red);font-size:14px;margin:8px 0 0}
 
+/* ===== 셔틀콕 ===== */
+.shbar{height:8px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;margin-top:10px}
+.shbar span{display:block;height:100%;background:var(--c000);border-radius:var(--r-pill)}
+.shrow small{color:var(--c100)}
+.shrow.done small{color:var(--c000);font-weight:600}
+.shcheck{width:24px;height:24px;flex:none;border-radius:50%;box-shadow:inset 0 0 0 2px var(--c150);display:flex;align-items:center;justify-content:center}
+.shrow.done .shcheck{background:var(--c000);color:var(--c999);box-shadow:none}
+
 /* ===== 하단 고정 참가 바·토스트 ===== */
 .joinbar{position:sticky;bottom:calc(64px + env(safe-area-inset-bottom,0px));margin-top:16px;z-index:4}
 .joinbar .btn{width:100%;min-height:52px;box-shadow:var(--shadow-2)}
@@ -329,6 +337,7 @@ body.has-joinbar .toast{bottom:calc(136px + env(safe-area-inset-bottom,0px))}
   <div class="nav-in">
     <button data-tab="court" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M12 4v16M3 9h18M3 15h18"/></svg>코트</button>
     <button data-tab="players"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14c2.6 0 4.4 1.5 5 4"/></svg>선수</button>
+    <button data-tab="shuttle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="18.5" r="2.5"/><path d="M10 16.3 6 4.5h12l-4 11.8M9.2 13.5h5.6M8 9h8M12 4.5v11"/></svg>셔틀콕</button>
     <button data-tab="record"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>기록·설정</button>
   </div>
 </nav>
@@ -357,7 +366,7 @@ function freshState(){
   return {v:1, updatedAt:0, courtCount:3, players:{}, courts:[], reserves:[], log:[], auto:{on:false, style:"balance"}, coach:{on:false, play:3, rest:1}, alert:{wait:20, gap:2}};
 }
 let state = freshState();
-const ui = {tab:"court", sort:"wait", g:"all", st:"all", lv:[], q:"", sheet:null, joinSel:[]};
+const ui = {tab:"court", sort:"wait", g:"all", st:"all", lv:[], q:"", sheet:null, joinSel:[], shf:"all"};
 let pendingAuto = [];
 let undoSnap = null, toastTimer = null;
 
@@ -805,6 +814,32 @@ function renderPlayersTab(){
   }
   return h;
 }
+// 오늘 온 사람: 지금 참가 중이거나, 오늘 게임을 했거나, 이미 콕을 낸 사람
+function todayPeople(){ return Object.values(state.players).filter(p => p.status !== "gone" || (p.games||0) > 0 || p.shuttle); }
+function renderShuttleTab(){
+  const all = todayPeople();
+  const done = all.filter(p => p.shuttle), notyet = all.filter(p => !p.shuttle);
+  const pct = all.length ? Math.round(done.length / all.length * 100) : 0;
+  let h = '<h2>셔틀콕 제출</h2>';
+  if(!all.length) return h + '<div class="empty-box">오늘 참가한 선수가 없어요.<br>선수 탭에서 참가 처리하면 여기에 나와요.</div>';
+  h += '<div class="setbox"><div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px"><strong style="font-size:16px">제출 <span class="num" style="font-size:20px">' + done.length + '</span><span class="num" style="color:var(--c100);font-weight:500"> / ' + all.length + '명</span></strong><span class="muted num">미제출 ' + notyet.length + '명</span></div>' +
+    '<div class="shbar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100" aria-label="제출 비율"><span style="width:' + pct + '%"></span></div>' +
+    '<div class="row" style="margin-top:12px"><button class="btn sm" data-act="shCopy"' + (notyet.length ? '' : ' disabled') + '>미제출 명단 복사</button></div></div>';
+  h += '<div class="seg" role="group" aria-label="제출 여부 필터" style="margin-bottom:12px">' +
+    [["all","전체"],["no","미제출"],["yes","제출"]].map(x => '<button class="pill" data-act="shFilter" data-v="' + x[0] + '" aria-pressed="' + (ui.shf === x[0]) + '">' + x[1] + '</button>').join("") + '</div>';
+  const byName = (a, b) => a.name.localeCompare(b.name, "ko");
+  let list = notyet.sort(byName).concat(done.sort((a, b) => (b.shuttleAt||0) - (a.shuttleAt||0)));
+  if(ui.shf === "no") list = list.filter(p => !p.shuttle);
+  if(ui.shf === "yes") list = list.filter(p => p.shuttle);
+  if(!list.length) h += '<div class="empty-box">' + (ui.shf === "no" ? "모두 제출했어요." : "아직 제출한 사람이 없어요.") + '</div>';
+  else h += '<p class="muted" style="margin:0 0 8px;font-size:12px">이름을 누르면 제출·미제출이 바뀌어요.</p><div class="list">' + list.map(p =>
+    '<button class="li shrow' + (p.shuttle ? ' done' : '') + '" data-act="shToggle" data-id="' + p.id + '" aria-pressed="' + !!p.shuttle + '">' +
+    '<span class="shcheck" aria-hidden="true">' + (p.shuttle ? '<svg viewBox="0 0 16 16" width="14" height="14"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '') + '</span>' +
+    '<span class="dot ' + (p.gender==="M"?"m":"f") + '" aria-hidden="true"></span><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span>' +
+    (p.status === "gone" ? '<span class="tag">귀가</span>' : '') +
+    '<small class="num">' + (p.shuttle ? '제출 ' + fmtClock(p.shuttleAt) : '미제출') + '</small></button>').join("") + '</div>';
+  return h;
+}
 function renderRecordTab(){
   let h = '<h2>코트 수</h2><div class="stepper"><span class="lab">사용할 코트</span><button class="btn" data-act="courtMinus" aria-label="코트 줄이기">−</button><span class="v num">' + state.courtCount + '</span><button class="btn" data-act="courtPlus" aria-label="코트 늘리기">+</button></div>';
   const co = coachCfg(), al = state.alert || {wait:20, gap:2};
@@ -838,7 +873,7 @@ function renderRecordTab(){
       return '<div class="logitem"><div class="t num">' + g.court + '번 코트, ' + fmtClock(g.start) + '–' + fmtClock(g.end) + ' (' + fmtMin(g.end - g.start) + ')</div>' + body + '</div>';
     }).join("") + '</div>';
   }
-  h += '<h2>하루 마무리</h2><p class="muted" style="margin-top:0">게임 수, 대기시간, 기록, 예약을 모두 지우고 선수는 저장된 선수로 돌려놓아요. 선수 정보는 그대로 남아요.</p>';
+  h += '<h2>하루 마무리</h2><p class="muted" style="margin-top:0">게임 수, 대기시간, 기록, 예약, 셔틀콕 제출 기록을 모두 지우고 선수는 저장된 선수로 돌려놓아요. 선수 정보는 그대로 남아요.</p>';
   h += '<button class="btn danger block" data-act="reset">하루 초기화</button>';
   return h;
 }
@@ -847,7 +882,7 @@ function render(){
   renderCounts();
   const keepQ = document.activeElement && document.activeElement.id === "q";
   const caret = keepQ ? document.activeElement.selectionStart : 0;
-  main.innerHTML = ui.tab === "court" ? renderCourtTab() : ui.tab === "players" ? renderPlayersTab() : renderRecordTab();
+  main.innerHTML = ui.tab === "court" ? renderCourtTab() : ui.tab === "players" ? renderPlayersTab() : ui.tab === "shuttle" ? renderShuttleTab() : renderRecordTab();
   document.body.classList.toggle("has-joinbar", ui.tab === "players" && ui.joinSel.length > 0);
   document.querySelectorAll(".nav button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === ui.tab ? "page" : "false"));
   if(keepQ){ const q = document.getElementById("q"); if(q){ q.focus(); try{ q.setSelectionRange(caret, caret); }catch(e){} } }
@@ -952,20 +987,25 @@ function renderLateSheet(s){
 function subPool(s){ return present().filter(p => p.status === "waiting" && reserveIndexOf(p.id) < 0 && !state.courts[s.court].players.includes(p.id)); }
 function renderSubSheet(s){
   const c = state.courts[s.court]; if(!c || !c.players){ closeSheet(); return; }
+  s.outs = s.outs.filter(id => c.players.includes(id));
+  s.ins = s.ins.filter(id => subPool(s).some(p => p.id === id)).slice(0, s.outs.length);
+  const n = s.outs.length;
   let h = '<div class="sheet-head"><h3 id="sheetTitle">' + (s.court+1) + '번 코트 선수 교체</h3><button class="btn ghost sm" data-act="close">닫기</button></div><div class="sheet-body">';
-  h += '<span class="label" style="margin-top:0">빠질 선수</span><div class="slots">' + c.players.map(id => {
-    const p = P(id); const on = s.out === id;
-    return '<button class="slot chip ' + (p.gender==="M"?"m":"f") + (on ? " picked" : "") + '" data-act="subOut" data-id="' + id + '" aria-pressed="' + on + '"><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span></button>';
+  h += '<span class="label" style="margin-top:0">1. 빠질 선수 <small style="font-weight:500">여러 명 고를 수 있어요</small></span><div class="slots">' + c.players.map(id => {
+    const p = P(id); const on = s.outs.includes(id);
+    return '<button class="slot chip ' + (p.gender==="M"?"m":"f") + (on ? " picked" : "") + '" data-act="subOut" data-id="' + id + '" aria-pressed="' + on + '"><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span>' + (on ? '<span class="tag alert">빠짐</span>' : '') + '</button>';
   }).join("") + '</div>';
-  h += '<span class="label">빠진 선수는</span><div class="seg" role="group" aria-label="빠진 선수 처리">' +
+  h += '<span class="label">2. 빠진 선수는</span><div class="seg" role="group" aria-label="빠진 선수 처리">' +
     [["waiting","대기로"],["resting","휴식"],["gone","귀가"]].map(x => '<button class="pill" data-act="subAfter" data-v="' + x[0] + '" aria-pressed="' + (s.after === x[0]) + '">' + x[1] + '</button>').join("") + '</div>';
   if(s.after === "waiting") h += '<p class="muted" style="margin:6px 0 0">이 게임은 세지 않고, 원래 기다리던 순서 그대로 대기로 돌아가요.</p>';
   const pool = sortPlayers(subPool(s), "wait");
-  h += '<span class="label" style="display:flex;align-items:center;justify-content:space-between">들어갈 선수' + (s.out ? '<button class="pill ai" data-act="subRec" style="min-height:32px">추천</button>' : '') + '</span>';
+  h += '<span class="label" style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>3. 들어갈 선수 ' + (n ? '<span class="num">' + s.ins.length + '/' + n + '명</span>' : '') + '</span>' + (n ? '<button class="pill ai" data-act="subRec" style="min-height:36px">추천으로 채우기</button>' : '') + '</span>';
   if(s.msg) h += '<p class="note" role="alert">' + esc(s.msg) + '</p>';
-  if(!pool.length) h += '<div class="empty-box">들어갈 수 있는 대기 선수가 없어요.</div>';
-  else h += '<div class="grid">' + pool.map(p => cardHTML(p, {act:"subIn", sel: s.in === p.id, selNo:"✓"})).join("") + '</div>';
-  h += '</div><div class="sheet-foot"><button class="btn primary" data-act="subDo"' + (s.out && s.in ? '' : ' disabled') + '>교체하기</button></div>';
+  if(!n) h += '<p class="muted" style="margin-top:0">먼저 위에서 빠질 선수를 골라 주세요.</p>';
+  else if(!pool.length) h += '<div class="empty-box">들어갈 수 있는 대기 선수가 없어요.</div>';
+  else h += '<div class="grid">' + pool.map(p => { const k = s.ins.indexOf(p.id); return cardHTML(p, {act:"subIn", sel: k >= 0, selNo: k + 1}); }).join("") + '</div>';
+  const ok = n > 0 && s.ins.length === n;
+  h += '</div><div class="sheet-foot"><button class="btn primary" data-act="subDo"' + (ok ? '' : ' disabled') + '>' + (n ? n + '명 교체하기' : '교체하기') + '</button></div>';
   const sc = sheet.querySelector(".sheet-body"); const top = sc ? sc.scrollTop : 0;
   sheet.innerHTML = h;
   const sc2 = sheet.querySelector(".sheet-body"); if(sc2) sc2.scrollTop = top;
@@ -1108,6 +1148,16 @@ document.addEventListener("click", e => {
     case "autoResume": state.courts[c].hold = false; commit(); if(!state.courts[c].players) toast("대기 선수가 4명이 되면 자동으로 배정해요"); break;
     case "joinAll": { const q = ui.q.trim(); const list = Object.values(state.players).filter(p => p.status === "gone" && (!q || p.name.includes(q))); list.forEach(p => joinPlayer(p.id)); commit(); toast(list.length + "명이 참가했어요"); break; }
     case "sort": ui.sort = b.dataset.v; render(); break;
+    case "shToggle": { const sp = P(id); if(!sp) break; sp.shuttle = !sp.shuttle; sp.shuttleAt = sp.shuttle ? now() : 0; commit({noAuto:true}); toast(sp.name + (sp.shuttle ? " 님 셔틀콕 제출" : " 님 미제출로 바꿨어요")); break; }
+    case "shFilter": ui.shf = b.dataset.v; render(); break;
+    case "shCopy": {
+      const names = todayPeople().filter(p => !p.shuttle).map(p => p.name).sort((a, b) => a.localeCompare(b, "ko"));
+      const text = "셔틀콕 미제출 (" + names.length + "명)\n" + names.join(", ");
+      const ok = () => toast("미제출 " + names.length + "명 명단을 복사했어요");
+      const fallback = () => { try{ const t = document.createElement("textarea"); t.value = text; t.style.position = "fixed"; t.style.opacity = "0"; document.body.appendChild(t); t.select(); const r = document.execCommand("copy"); t.remove(); r ? ok() : toast("복사하지 못했어요. 미제출 필터로 명단을 확인해 주세요"); }catch(err){ toast("복사하지 못했어요. 미제출 필터로 명단을 확인해 주세요"); } };
+      if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, fallback); else fallback();
+      break;
+    }
     case "filter": {
       const g = b.dataset.g, v = b.dataset.v;
       if(g === "lv"){ ui.lv = ui.lv.includes(v) ? ui.lv.filter(x => x !== v) : ui.lv.concat(v); } else ui[g] = v;
@@ -1145,24 +1195,38 @@ document.addEventListener("click", e => {
       s.sameOk = false;
       commit({noAuto:true}); renderSelectSheet(s); break;
     }
-    case "subOpen": { const ct = state.courts[c]; if(!ct || !ct.players) break; openSheet({type:"sub", court:c, out: id || null, in:null, after:"waiting", msg:""}); break; }
-    case "subOut": s.out = id; s.msg = ""; renderSubSheet(s); break;
+    case "subOpen": { const ct = state.courts[c]; if(!ct || !ct.players) break; openSheet({type:"sub", court:c, outs: id ? [id] : [], ins:[], after:"waiting", msg:""}); break; }
+    case "subOut": { const k = s.outs.indexOf(id); if(k >= 0){ s.outs.splice(k, 1); s.ins.splice(k, 1); } else s.outs.push(id); s.msg = ""; renderSubSheet(s); break; }
     case "subAfter": s.after = b.dataset.v; renderSubSheet(s); break;
-    case "subIn": s.in = (s.in === id ? null : id); s.msg = ""; renderSubSheet(s); break;
+    case "subIn": {
+      const k = s.ins.indexOf(id);
+      if(k >= 0) s.ins.splice(k, 1);
+      else if(s.ins.length < s.outs.length) s.ins.push(id);
+      else { s.msg = s.outs.length + "명을 모두 골랐어요. 바꾸려면 고른 선수를 한 번 더 눌러 빼 주세요"; renderSubSheet(s); break; }
+      s.msg = ""; renderSubSheet(s); break;
+    }
     case "subRec": {
-      if(!s.out) break;
-      const ct = state.courts[s.court]; const fixed = ct.players.filter(x => x !== s.out);
-      const f = pickFill(fixed, subPool(s), P(s.out));
-      if(f){ s.in = f; s.msg = ""; } else s.msg = "추천할 대기 선수가 없어요";
+      const ct = state.courts[s.court]; if(!s.outs.length) break;
+      const fixed = ct.players.filter(x => !s.outs.includes(x));
+      const pool = subPool(s); const ins = [];
+      for(const o of s.outs){
+        const f = pickFill(fixed.concat(ins), pool.filter(p => !ins.includes(p.id)), P(o));
+        if(!f) break; ins.push(f);
+      }
+      s.ins = ins;
+      s.msg = ins.length < s.outs.length ? "대기 선수가 부족해서 " + ins.length + "명만 채웠어요" : "";
       renderSubSheet(s); break;
     }
     case "subDo": {
-      if(!s.out || !s.in) break;
-      const on = P(s.out).name, nn = P(s.in).name, ci = s.court, after = s.after;
+      if(!s.outs.length || s.ins.length !== s.outs.length) break;
+      const ci = s.court, after = s.after, outs = s.outs.slice(), ins = s.ins.slice();
+      const on = outs.map(x => P(x).name).join(", "), nn = ins.map(x => P(x).name).join(", ");
       snapshotForUndo();
-      if(!subPlayer(ci, s.out, s.in, after)){ closeSheet(); toast("교체하지 못했어요. 코트 상황을 확인해 주세요"); break; }
+      let ok = true;
+      outs.forEach((o, i) => { if(!subPlayer(ci, o, ins[i], after)) ok = false; });
       closeSheet(); commit({noAuto:true});
-      toast((ci+1) + "번 코트: " + on + " 님 대신 " + nn + " 님이 들어갔어요" + (after === "gone" ? " (" + on + " 님 귀가)" : after === "resting" ? " (" + on + " 님 휴식)" : ""), true);
+      if(!ok){ toast("일부 선수를 교체하지 못했어요. 코트를 확인해 주세요", true); break; }
+      toast((ci+1) + "번 코트: " + on + " 님 대신 " + nn + " 님이 들어갔어요" + (after === "gone" ? " (귀가 처리)" : after === "resting" ? " (휴식)" : ""), true);
       break;
     }
     case "unpick": s.chosen = s.chosen.filter(x => x !== id); s.msg = ""; s.sameOk = false; renderSelectSheet(s); break;
@@ -1223,9 +1287,9 @@ document.addEventListener("click", e => {
     }
     case "reset": {
       const playing = state.courts.filter(x => x.players).length;
-      confirmBox("하루 초기화할까요?", (playing ? "진행 중인 " + playing + "게임은 기록 없이 끝나요. " : "") + "게임 수, 대기시간, 기록, 예약이 모두 지워지고 선수는 저장된 선수로 이동해요.", "초기화", () => {
+      confirmBox("하루 초기화할까요?", (playing ? "진행 중인 " + playing + "게임은 기록 없이 끝나요. " : "") + "게임 수, 대기시간, 기록, 예약, 셔틀콕 제출 기록이 모두 지워지고 선수는 저장된 선수로 이동해요.", "초기화", () => {
         snapshotForUndo();
-        Object.values(state.players).forEach(p => { p.games = 0; p.waitTotal = 0; p.waitSince = null; p.status = "gone"; p.lastGroup = ""; p.lateAt = ""; p.coachStreak = 0; p.coachRest = 0; });
+        Object.values(state.players).forEach(p => { p.games = 0; p.waitTotal = 0; p.waitSince = null; p.status = "gone"; p.lastGroup = ""; p.lateAt = ""; p.coachStreak = 0; p.coachRest = 0; p.shuttle = false; p.shuttleAt = 0; });
         state.courts = []; state.reserves = []; state.log = [];
         commit(); toast("하루 초기화를 마쳤어요", true);
       }, true);
