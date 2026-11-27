@@ -55,7 +55,7 @@
     --accent-bg:#331D0F;
     --blue:#418AF0; --blue-bg:#002861; --red:#EB3838; --red-bg:#521D1D;
     --yellow:#D1AD36; --yellow-bg:#383015; --green:#21C798; --green-bg:#1A4D3E;
-    --ai:#A770FF; --ai-bg:#291E3C;
+    --ai:#A770FF; --ai-bg:#291E3C; --on-ai:#000000;
     --court:#2E2E2E;
     --shadow-1:none; --shadow-2:0 4px 12px rgba(0,0,0,.6); --toast-bg:#2E2E2E;
     color-scheme:dark;
@@ -69,7 +69,7 @@
   --accent-bg:#331D0F;
   --blue:#418AF0; --blue-bg:#002861; --red:#EB3838; --red-bg:#521D1D;
   --yellow:#D1AD36; --yellow-bg:#383015; --green:#21C798; --green-bg:#1A4D3E;
-  --ai:#A770FF; --ai-bg:#291E3C;
+  --ai:#A770FF; --ai-bg:#291E3C; --on-ai:#000000;
   --court:#2E2E2E;
   --shadow-1:none; --shadow-2:0 4px 12px rgba(0,0,0,.6); --toast-bg:#2E2E2E;
   color-scheme:dark;
@@ -148,6 +148,10 @@ h2 small{font-size:12px;font-weight:500;color:var(--c150)}
 .court-actions{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px;margin-top:12px}
 .court-actions.two{grid-template-columns:1fr 1fr}
 .court-actions.one{grid-template-columns:1fr}
+.court-actions.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.court-actions.three .btn{font-size:14px;padding:0 4px}
+.btn.ai{background:var(--ai);border-color:var(--ai);color:var(--on-ai,#FFFFFF)}
+@media (hover:hover){.btn.ai:not(:disabled):hover{background:var(--ai);opacity:.88}}
 .court-actions .btn{padding:0 8px;white-space:nowrap}
 
 /* ===== 예약 ===== */
@@ -192,6 +196,7 @@ h2 small{font-size:12px;font-weight:500;color:var(--c150)}
 .pill{min-height:36px;border-radius:var(--r-pill);border:1px solid var(--divider);background:var(--surface);color:var(--c100);padding:0 14px;font-size:14px;font-weight:500;white-space:nowrap;flex:none;position:relative;transition:background-color var(--dur-fast) var(--ease)}
 .pill::after{content:"";position:absolute;inset:-4px 0}
 .pill[aria-pressed="true"]{background:var(--c000);color:var(--c999);border-color:var(--c000);font-weight:600}
+.pill.ai{color:var(--ai);border-color:var(--ai);font-weight:600}
 .pill.m[aria-pressed="true"]{background:var(--blue-bg);border-color:var(--blue);color:var(--c000)}
 .pill.f[aria-pressed="true"]{background:var(--red-bg);border-color:var(--red);color:var(--c000)}
 select,input[type=text],input[type=search],input[type=time]{min-height:48px;border-radius:var(--r-sm);border:1px solid var(--c150);background:var(--surface);padding:0 14px;font-size:16px;width:100%;color:var(--c000)}
@@ -271,6 +276,8 @@ td.r,th.r{text-align:right}
 .slot.chip{border:none;justify-content:flex-start;padding-right:2px}
 .slot button{border:none;background:none;min-width:32px;min-height:32px;font-size:18px;line-height:1;color:var(--c100)}
 .rec{background:var(--surface-2);border-radius:var(--r-md);padding:12px;margin-bottom:12px}
+.rec .seg{flex-wrap:wrap;overflow:visible;gap:6px}
+.rec .pill{padding:0 12px}
 .rec p{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--c100)}
 .actlist{display:flex;flex-direction:column;gap:8px}
 .actlist .btn{justify-content:flex-start;min-height:48px;padding:0 16px}
@@ -335,8 +342,7 @@ const MODES = [
   {id:"MM", label:"남복", need:{M:4,F:0}},
   {id:"FF", label:"여복", need:{M:0,F:4}},
   {id:"MX", label:"혼복", need:{M:2,F:2}},
-  {id:"M1F3", label:"남1 여3", need:{M:1,F:3}},
-  {id:"ANY", label:"섞어서", need:null}
+  {id:"M1F3", label:"남1 여3", need:{M:1,F:3}}
 ];
 
 // ---------- 상태 ----------
@@ -397,8 +403,8 @@ async function flushRemote(){
     if(dirty) saveTimer = setTimeout(flushRemote, 1500);
   }
 }
-function commit(){
-  autoFill();
+function commit(opt){
+  if(!(opt && opt.noAuto)) autoFill();
   state.updatedAt = now();
   saveLocal();
   scheduleRemote();
@@ -440,6 +446,7 @@ function endGame(ci){
   state.log.unshift({court:ci+1, players:c.players.slice(), teams:c.teams, start:c.startedAt, end:now()});
   if(state.log.length > 300) state.log.length = 300;
   c.players = null; c.teams = null; c.snap = null; c.startedAt = 0; c.auto = false;
+  c.hold = true; // 끝난 코트는 자동 매칭이 바로 채우지 않고 비워 둠
 }
 function cancelGame(ci){
   const c = state.courts[ci]; if(!c.players) return;
@@ -449,7 +456,7 @@ function cancelGame(ci){
     else { p.status = "waiting"; p.waitSince = now(); }
   });
   c.players = null; c.teams = null; c.snap = null; c.startedAt = 0; c.auto = false;
-  c.hold = !!(state.auto && state.auto.on); // 취소한 코트는 자동 매칭이 바로 다시 채우지 않음
+  c.hold = true; // 취소한 코트도 비워 둠
 }
 
 // 팀 나누기: 급수 점수 + 혼성일 때 남자 보정치
@@ -581,7 +588,7 @@ function renderCounts(){
 function renderCourtTab(){
   const on = !!(state.auto && state.auto.on);
   let h = '<div class="autobox' + (on ? " on" : "") + '"><div class="autorow"><div class="t"><strong id="autoLbl">AI 자동 매칭</strong><small>' +
-    (on ? '빈 코트가 생기면 오래 기다린 선수부터 성별과 급수를 맞춰 바로 배정해요' : '켜면 빈 코트에 4명을 자동으로 배정해요') +
+    (on ? '아직 안 쓴 코트를 자동으로 채워요. 게임이 끝난 코트는 비워 둬요' : '켜면 아직 안 쓴 코트를 자동으로 채워요') +
     '</small></div><button class="switch" role="switch" aria-checked="' + on + '" aria-labelledby="autoLbl" data-act="autoToggle"></button></div>';
   if(on){
     h += '<div class="seg" role="group" aria-label="자동 매칭 구성" style="margin-top:10px">' +
@@ -592,16 +599,9 @@ function renderCourtTab(){
   state.courts.forEach((c, i) => {
     h += '<article class="court" aria-label="' + (i+1) + '번 코트">';
     if(!c.players){
-      const held = on && c.hold;
-      h += '<div class="court-head"><strong>' + (i+1) + '번 코트</strong><span>' + (held ? "자동 매칭 쉬는 중" : "비어 있음") + '</span></div>';
-      h += '<div class="field empty">' + (held ? "취소한 코트는 자동으로 채우지 않아요" : on ? "대기 선수가 4명이 되면 자동으로 배정해요" : "배정을 기다리고 있어요") + '</div>';
-      if(held){
-        h += '<div class="court-actions two"><button class="btn" data-act="assign" data-c="' + i + '">선수 배정</button><button class="btn primary" data-act="autoResume" data-c="' + i + '">자동으로 채우기</button></div>';
-      } else if(firstReady >= 0){
-        h += '<div class="court-actions two"><button class="btn" data-act="assign" data-c="' + i + '">선수 배정</button><button class="btn primary" data-act="startResv" data-r="' + firstReady + '" data-c="' + i + '">예약 ' + (firstReady+1) + ' 시작</button></div>';
-      } else {
-        h += '<div class="court-actions one"><button class="btn primary" data-act="assign" data-c="' + i + '">선수 배정</button></div>';
-      }
+      h += '<div class="court-head"><strong>' + (i+1) + '번 코트</strong><span>비어 있음</span></div>';
+      h += '<div class="field empty">' + (on && !c.hold ? "대기 선수가 4명이 되면 자동으로 배정해요" : "배정을 기다리고 있어요") + '</div>';
+      h += '<div class="court-actions one"><button class="btn primary" data-act="assign" data-c="' + i + '">선수 배정</button></div>';
     } else {
       h += '<div class="court-head"><strong>' + (i+1) + '번 코트' + (c.auto ? ' <span class="tag auto">자동</span>' : '') + '</strong><span class="num">' + fmtClock(c.startedAt) + ' 시작, ' + fmtMin(now() - c.startedAt) + '째</span></div>';
       if(c.teams){
@@ -803,7 +803,7 @@ function renderSelectSheet(s){
     const p = P(id);
     return '<div class="slot chip ' + (p.gender==="M"?"m":"f") + '"><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span><button data-act="unpick" data-id="' + id + '" aria-label="' + esc(p.name) + ' 빼기">×</button></div>';
   }).join("") + '</div>';
-  h += '<div class="rec"><p>자동 추천 (오래 기다린 순)</p><div class="seg">' + MODES.map(m => '<button class="pill" data-act="rec" data-v="' + m.id + '">' + m.label + '</button>').join("") + '</div></div>';
+  h += '<div class="rec"><p>자동 추천 (오래 기다린 순)</p><div class="seg">' + MODES.map(m => '<button class="pill" data-act="rec" data-v="' + m.id + '">' + m.label + '</button>').join("") + (state.auto && state.auto.on ? '<button class="pill ai" data-act="rec" data-v="AI">AI매칭</button>' : '') + '</div></div>';
   if(s.msg) h += '<p class="note" role="alert">' + esc(s.msg) + '</p>';
   h += '<div class="seg" style="margin-bottom:8px">' +
     ['all:전체','M:남자','F:여자'].map(x => { const [v,l] = x.split(":"); return '<button class="pill ' + (v==="M"?"m":v==="F"?"f":"") + '" data-act="sgen" data-v="' + v + '" aria-pressed="' + (s.g===v) + '">' + l + '</button>'; }).join("") +
@@ -985,6 +985,18 @@ document.addEventListener("click", e => {
       if(state.auto.on) state.courts.forEach(c => { c.hold = false; });
       commit(); toast(state.auto.on ? "AI 자동 매칭을 켰어요" : "AI 자동 매칭을 껐어요"); break;
     }
+    case "autoAssign": {
+      const ct = state.courts[c]; if(!ct || ct.players) break;
+      const pool = present().filter(p => p.status === "waiting" && reserveIndexOf(p.id) < 0);
+      const ids = autoPick(pool, (state.auto && state.auto.style) || "balance");
+      if(!ids){
+        const n = pool.filter(p => !coachCapped(p)).length;
+        toast(n < 4 ? "대기 선수가 부족해요 (" + n + "명). 4명이 되면 다시 눌러 주세요" : "함께 들어갈 4명을 맞추지 못했어요. 고정 파트너가 게임 중인지 확인해 주세요");
+        break;
+      }
+      startGame(c, ids); ct.auto = true; commit(); toast((c+1) + "번 코트에 AI 자동 매칭으로 배정했어요");
+      break;
+    }
     case "autoStyle": state.auto.style = b.dataset.v; commit(); break;
     case "autoResume": state.courts[c].hold = false; commit(); if(!state.courts[c].players) toast("대기 선수가 4명이 되면 자동으로 배정해요"); break;
     case "joinAll": { const q = ui.q.trim(); const list = Object.values(state.players).filter(p => p.status === "gone" && (!q || p.name.includes(q))); list.forEach(p => joinPlayer(p.id)); commit(); toast(list.length + "명이 참가했어요"); break; }
@@ -1019,7 +1031,13 @@ document.addEventListener("click", e => {
     case "sgen": s.g = b.dataset.v; renderSelectSheet(s); break;
     case "ssort": s.sort = b.dataset.v; renderSelectSheet(s); break;
     case "rec": {
-      const res = recommend(b.dataset.v, selectPool(s).filter(p => p.status === "waiting"));
+      const pool = selectPool(s).filter(p => p.status === "waiting");
+      let res;
+      if(b.dataset.v === "AI"){
+        const ids = autoPick(pool, (state.auto && state.auto.style) || "balance");
+        const n = pool.filter(p => !coachCapped(p)).length;
+        res = ids ? {ids, warn:""} : {err: n < 4 ? "AI매칭에 쓸 대기 선수가 부족해요 (" + n + "명)" : "함께 들어갈 4명을 맞추지 못했어요. 고정 파트너가 게임 중인지 확인해 주세요"};
+      } else res = recommend(b.dataset.v, pool);
       if(res.err){ s.msg = res.err; } else { s.chosen = res.ids; s.msg = res.warn || ""; s.sameOk = false; }
       renderSelectSheet(s); break;
     }
@@ -1050,8 +1068,8 @@ document.addEventListener("click", e => {
       break;
     }
     case "split": splitCourt(c); commit(); break;
-    case "cancel": confirmBox((c+1) + "번 코트 게임을 취소할까요?", "게임 수는 늘지 않고, 네 명은 배정 전 대기 상태로 돌아가요.", "게임 취소", () => { cancelGame(c); commit(); toast("게임을 취소했어요"); }); break;
-    case "end": snapshotForUndo(); endGame(c); commit(); toast((c+1) + "번 코트 게임을 종료했어요", true); break;
+    case "cancel": confirmBox((c+1) + "번 코트 게임을 취소할까요?", "게임 수는 늘지 않고, 네 명은 배정 전 대기 상태로 돌아가요.", "게임 취소", () => { cancelGame(c); commit({noAuto:true}); toast("게임을 취소했어요"); }); break;
+    case "end": snapshotForUndo(); endGame(c); commit({noAuto:true}); toast((c+1) + "번 코트 게임을 종료했어요", true); break;
     case "courtPlus": if(state.courtCount < 12){ state.courtCount++; commit(); } break;
     case "courtMinus": {
       if(state.courtCount <= 1) break;
