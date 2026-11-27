@@ -148,6 +148,13 @@ h2 small{font-size:12px;font-weight:500;color:var(--c150)}
 .court-actions{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px;margin-top:12px}
 .court-actions.two{grid-template-columns:1fr 1fr}
 .court-actions.one{grid-template-columns:1fr}
+.court-actions.four{grid-template-columns:1fr .8fr .8fr 1.2fr}
+.court-actions.four .btn{font-size:14px;padding:0 4px}
+.chipbtn{display:block;width:100%;border:none;background:none;padding:0;text-align:left;border-radius:var(--r-sm)}
+.chipbtn:active{transform:scale(.97)}
+.slot.picked{outline:2px solid var(--c000);outline-offset:-2px}
+button.slot{border:none;font:inherit;cursor:pointer;width:100%;text-align:left;color:var(--c000)}
+.slot .gone-btn{font-size:12px;font-weight:600;min-width:40px;min-height:32px;border-radius:var(--r-sm);color:var(--red);padding:0 6px}
 .court-actions.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .court-actions.three .btn{font-size:14px;padding:0 4px}
 .btn.ai{background:var(--ai);border-color:var(--ai);color:var(--on-ai,#FFFFFF)}
@@ -443,6 +450,37 @@ function startGame(ci, ids, teams){
   });
   c.players = ids.slice(); c.teams = teams || null; c.teamIdx = 0; c.startedAt = now(); c.hold = false; c.auto = false;
 }
+// 한 자리를 채울 사람 추천: 대기 순서 + 오늘 만난 횟수 + 성별·급수가 빠진 사람과 비슷한지
+function pickFill(fixedIds, pool, like){
+  const meet = meetStats().meet;
+  const cand = pool.filter(p => !fixedIds.includes(p.id) && !coachCapped(p) && !(p.partner && P(p.partner) && P(p.partner).status !== "gone"));
+  if(!cand.length) return null;
+  const order = cand.slice().sort(waitOrder);
+  let best = null, bs = Infinity;
+  order.forEach((p, rank) => {
+    let sc = rank;
+    fixedIds.forEach(f => { sc += (meet[pairKey(p.id, f)] || 0) * 3; if(lastMates(p).includes(f)) sc += 5; });
+    if(like){ if(p.gender !== like.gender) sc += 6; sc += Math.abs(LV_SCORE[p.level] - LV_SCORE[like.level]) * 1.5; }
+    if(sc < bs){ bs = sc; best = p.id; }
+  });
+  return best;
+}
+function subPlayer(ci, outId, inId, after){
+  const c = state.courts[ci]; if(!c.players) return false;
+  const k = c.players.indexOf(outId); if(k < 0) return false;
+  const o = P(outId), n = P(inId), sn = (c.snap && c.snap[outId]) || null;
+  c.players[k] = inId;
+  if(c.teams) c.teams = c.teams.map(t => t.map(x => x === outId ? inId : x));
+  if(sn){ o.waitTotal = sn.waitTotal; o.coachRest = sn.coachRest || 0; }
+  if(after === "waiting"){ o.status = "waiting"; o.waitSince = (sn && sn.status === "waiting" && sn.waitSince) ? sn.waitSince : now(); }
+  else if(after === "resting"){ o.status = "resting"; o.waitSince = null; }
+  else { o.status = "gone"; o.waitSince = null; o.lateAt = ""; state.reserves.forEach(r => { r.players = r.players.filter(x => x !== outId); r.teams = null; }); }
+  if(c.snap) delete c.snap[outId];
+  c.snap = c.snap || {};
+  c.snap[inId] = {status:n.status, waitTotal:n.waitTotal, waitSince:n.waitSince, coachRest:n.coachRest||0};
+  stopWait(n); n.status = "playing"; n.coachRest = 0;
+  return true;
+}
 function endGame(ci){
   const c = state.courts[ci]; if(!c.players) return;
   const key = groupKey(c.players);
@@ -482,6 +520,8 @@ function teamOptions(ids){
     let cost = Math.abs(a.reduce((s,p)=>s+w(p),0) - b.reduce((s,p)=>s+w(p),0));
     if(males === 2 && (a[0].gender === a[1].gender)) cost += 10; // 혼복은 남녀 한 쌍씩
     if(a.some(x => x.partner && b.some(y => y.id === x.partner))) cost += 100; // 고정 파트너는 같은 팀
+    const ms = meetStats().mate; // 오늘 같은 팀이었던 사람끼리는 되도록 다른 팀
+    [a, b].forEach(t => { if(t[0].partner !== t[1].id) cost += (ms[pairKey(t[0].id, t[1].id)] || 0) * 0.8; });
     return {teams:[pr[0].map(i => ids[i]), pr[1].map(i => ids[i])], cost};
   }).sort((x,y) => x.cost - y.cost);
 }
@@ -493,6 +533,22 @@ function splitCourt(ci){
 }
 
 // ---- 매칭 엔진 ----
+// 오늘 같이 친 횟수, 같은 팀이었던 횟수 (게임 기록에서 계산, 기록이 바뀔 때만 다시 계산)
+let meetCache = {n:-1, top:null, meet:{}, mate:{}};
+function pairKey(a, b){ return a < b ? a + "|" + b : b + "|" + a; }
+function meetStats(){
+  const top = state.log[0];
+  if(meetCache.n === state.log.length && meetCache.top === top) return meetCache;
+  const meet = {}, mate = {};
+  state.log.forEach(g => {
+    const ps = g.players || [];
+    for(let i = 0; i < ps.length; i++) for(let j = i+1; j < ps.length; j++){ const k = pairKey(ps[i], ps[j]); meet[k] = (meet[k]||0) + 1; }
+    (g.teams || []).forEach(t => { if(t && t.length === 2){ const k = pairKey(t[0], t[1]); mate[k] = (mate[k]||0) + 1; } });
+  });
+  meetCache = {n: state.log.length, top, meet, mate};
+  return meetCache;
+}
+function lastMates(p){ return p.lastGroup ? p.lastGroup.split("|").filter(x => x !== p.id) : []; }
 // 고정 파트너는 한 묶음(unit)으로 다루고, 대기 순위 + 성별 구성 + 팀 균형 + 직전 4명 중복을 점수로 비교한다
 function waitOrder(a, b){ return curWait(b) - curWait(a) || (a.games||0) - (b.games||0); }
 function coachCfg(){ const c = state.coach || {}; return {on:!!c.on, play:c.play || 3, rest:c.rest || 1}; }
@@ -518,13 +574,24 @@ function genderPenalty(m, style){
 function bestGroup(pool, opt){
   const rank = {}; pool.slice().sort(waitOrder).forEach((p, i) => { rank[p.id] = i; });
   const units = matchUnits(pool).slice(0, 12);
+  const meet = meetStats().meet;
+  const minGames = pool.length ? Math.min(...pool.map(p => p.games||0)) : 0;
   let best = null, bestScore = Infinity, bestSame = false;
   const evalGroup = chosen => {
     const g = [].concat(...chosen), ids = g.map(p => p.id);
     const m = g.filter(p => p.gender === "M").length;
     if(opt.need && (m !== opt.need.M || 4 - m !== opt.need.F)) return;
     const key = groupKey(ids), same = ids.every(id => P(id).lastGroup === key);
-    const score = ids.reduce((t, id) => t + rank[id], 0) + (opt.style ? genderPenalty(m, opt.style) * 3 : 0) + teamOptions(ids)[0].cost * 1.5 + (same ? 100 : 0);
+    // 오늘 이미 같이 친 사람끼리, 특히 직전 게임 동료끼리는 점수를 깎는다 (고정 파트너 쌍은 제외)
+    let pairPen = 0;
+    for(let x = 0; x < 4; x++) for(let y = x+1; y < 4; y++){
+      const a = g[x], b = g[y];
+      if(a.partner === b.id) continue;
+      pairPen += (meet[pairKey(a.id, b.id)] || 0) * 3;
+      if(lastMates(a).includes(b.id)) pairPen += 5;
+    }
+    const fair = g.reduce((t, p) => t + ((p.games||0) - minGames), 0) * 2; // 게임 수 적은 사람 우선
+    const score = ids.reduce((t, id) => t + rank[id], 0) + (opt.style ? genderPenalty(m, opt.style) * 3 : 0) + teamOptions(ids)[0].cost * 1.5 + pairPen + fair + (same ? 100 : 0);
     if(score < bestScore){ bestScore = score; best = ids; bestSame = same; }
   };
   const rec = (from, chosen, size) => {
@@ -616,12 +683,13 @@ function renderCourtTab(){
       h += '<div class="court-actions one"><button class="btn primary" data-act="assign" data-c="' + i + '">선수 배정</button></div>';
     } else {
       h += '<div class="court-head"><strong>' + (i+1) + '번 코트' + (c.auto ? ' <span class="tag auto">자동</span>' : '') + '</strong><span class="num">' + fmtClock(c.startedAt) + ' 시작, ' + fmtMin(now() - c.startedAt) + '째</span></div>';
+      const cb = id => '<button class="chipbtn" data-act="subOpen" data-c="' + i + '" data-id="' + id + '" aria-label="' + (P(id) ? esc(P(id).name) : "") + ' 교체">' + chipHTML(id) + '</button>';
       if(c.teams){
-        h += '<div class="field"><div class="side">' + c.teams[0].map(id => chipHTML(id)).join("") + '</div><div class="side">' + c.teams[1].map(id => chipHTML(id)).join("") + '</div></div>';
+        h += '<div class="field"><div class="side">' + c.teams[0].map(cb).join("") + '</div><div class="side">' + c.teams[1].map(cb).join("") + '</div></div>';
       } else {
-        h += '<div class="field undecided">' + c.players.map(id => chipHTML(id)).join("") + '</div>';
+        h += '<div class="field undecided">' + c.players.map(cb).join("") + '</div>';
       }
-      h += '<div class="court-actions"><button class="btn" data-act="split" data-c="' + i + '">' + (c.teams ? "다시 나누기" : "팀 나누기") + '</button><button class="btn" data-act="cancel" data-c="' + i + '">취소</button><button class="btn primary" data-act="end" data-c="' + i + '">게임 종료</button></div>';
+      h += '<div class="court-actions four"><button class="btn" data-act="split" data-c="' + i + '">' + (c.teams ? "다시 나누기" : "팀 나누기") + '</button><button class="btn" data-act="subOpen" data-c="' + i + '">교체</button><button class="btn" data-act="cancel" data-c="' + i + '">취소</button><button class="btn primary" data-act="end" data-c="' + i + '">게임 종료</button></div>';
     }
     h += '</article>';
   });
@@ -798,6 +866,7 @@ function renderSheet(){
   if(s.type === "confirm") return renderConfirmSheet(s);
   if(s.type === "late") return renderLateSheet(s);
   if(s.type === "partner") return renderPartnerSheet(s);
+  if(s.type === "sub") return renderSubSheet(s);
 }
 function selectPool(s){
   return present().filter(p => {
@@ -817,8 +886,9 @@ function renderSelectSheet(s){
     const id = s.chosen[i];
     if(!id) return '<div class="slot">' + (i+1) + '번째 선수</div>';
     const p = P(id);
-    return '<div class="slot chip ' + (p.gender==="M"?"m":"f") + '"><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span><button data-act="unpick" data-id="' + id + '" aria-label="' + esc(p.name) + ' 빼기">×</button></div>';
+    return '<div class="slot chip ' + (p.gender==="M"?"m":"f") + '"><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span>' + (p.status !== "playing" ? '<button class="gone-btn" data-act="pickGone" data-id="' + id + '" aria-label="' + esc(p.name) + ' 귀가 처리">없음</button>' : '') + '<button data-act="unpick" data-id="' + id + '" aria-label="' + esc(p.name) + ' 빼기">×</button></div>';
   }).join("") + '</div>';
+  if(s.chosen.length) h += '<p class="muted" style="margin:-4px 0 12px;font-size:12px">이미 간 사람은 <b>없음</b>을 누르면 귀가 처리하고 다른 사람으로 채워요.</p>';
   h += '<div class="rec"><p>자동 추천 (오래 기다린 순)</p><div class="seg">' + MODES.map(m => '<button class="pill" data-act="rec" data-v="' + m.id + '">' + m.label + '</button>').join("") + (state.auto && state.auto.on ? '<button class="pill ai" data-act="rec" data-v="AI">AI매칭</button>' : '') + '</div></div>';
   if(s.msg) h += '<p class="note" role="alert">' + esc(s.msg) + '</p>';
   h += '<div class="seg" style="margin-bottom:8px">' +
@@ -878,6 +948,27 @@ function renderLateSheet(s){
     '<label class="label" for="lateTime">도착 예정 시간 (선택)</label><input type="time" id="lateTime" value="' + esc(cur) + '">' +
     '<p class="muted">노란 늦참 뱃지가 붙고, 도착할 때까지 배정과 자동 매칭에서 빠지며 대기시간도 세지 않아요.</p></div>' +
     '<div class="sheet-foot"><button class="btn" data-act="lateSave" data-none="1">시간 없이 표시</button><button class="btn late" data-act="lateSave">늦참 표시</button></div>';
+}
+function subPool(s){ return present().filter(p => p.status === "waiting" && reserveIndexOf(p.id) < 0 && !state.courts[s.court].players.includes(p.id)); }
+function renderSubSheet(s){
+  const c = state.courts[s.court]; if(!c || !c.players){ closeSheet(); return; }
+  let h = '<div class="sheet-head"><h3 id="sheetTitle">' + (s.court+1) + '번 코트 선수 교체</h3><button class="btn ghost sm" data-act="close">닫기</button></div><div class="sheet-body">';
+  h += '<span class="label" style="margin-top:0">빠질 선수</span><div class="slots">' + c.players.map(id => {
+    const p = P(id); const on = s.out === id;
+    return '<button class="slot chip ' + (p.gender==="M"?"m":"f") + (on ? " picked" : "") + '" data-act="subOut" data-id="' + id + '" aria-pressed="' + on + '"><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span></button>';
+  }).join("") + '</div>';
+  h += '<span class="label">빠진 선수는</span><div class="seg" role="group" aria-label="빠진 선수 처리">' +
+    [["waiting","대기로"],["resting","휴식"],["gone","귀가"]].map(x => '<button class="pill" data-act="subAfter" data-v="' + x[0] + '" aria-pressed="' + (s.after === x[0]) + '">' + x[1] + '</button>').join("") + '</div>';
+  if(s.after === "waiting") h += '<p class="muted" style="margin:6px 0 0">이 게임은 세지 않고, 원래 기다리던 순서 그대로 대기로 돌아가요.</p>';
+  const pool = sortPlayers(subPool(s), "wait");
+  h += '<span class="label" style="display:flex;align-items:center;justify-content:space-between">들어갈 선수' + (s.out ? '<button class="pill ai" data-act="subRec" style="min-height:32px">추천</button>' : '') + '</span>';
+  if(s.msg) h += '<p class="note" role="alert">' + esc(s.msg) + '</p>';
+  if(!pool.length) h += '<div class="empty-box">들어갈 수 있는 대기 선수가 없어요.</div>';
+  else h += '<div class="grid">' + pool.map(p => cardHTML(p, {act:"subIn", sel: s.in === p.id, selNo:"✓"})).join("") + '</div>';
+  h += '</div><div class="sheet-foot"><button class="btn primary" data-act="subDo"' + (s.out && s.in ? '' : ' disabled') + '>교체하기</button></div>';
+  const sc = sheet.querySelector(".sheet-body"); const top = sc ? sc.scrollTop : 0;
+  sheet.innerHTML = h;
+  const sc2 = sheet.querySelector(".sheet-body"); if(sc2) sc2.scrollTop = top;
 }
 function renderPartnerSheet(s){
   const me = P(s.id); if(!me){ closeSheet(); return; }
@@ -1043,6 +1134,37 @@ document.addEventListener("click", e => {
       } else { s.msg = "4명을 모두 골랐어요. 바꾸려면 위에서 한 명을 빼 주세요"; renderSelectSheet(s); break; }
       s.msg = msg; s.sameOk = false; renderSelectSheet(s); break;
     }
+    case "pickGone": {
+      const gp = P(id); if(!gp) break;
+      const k = s.chosen.indexOf(id);
+      if(!sendHome(id)){ s.msg = gp.name + " 님은 게임 중이라 귀가 처리할 수 없어요"; renderSelectSheet(s); break; }
+      s.chosen.splice(k, 1);
+      const fill = pickFill(s.chosen, selectPool(s).filter(p => p.status === "waiting"), gp);
+      if(fill){ s.chosen.splice(k, 0, fill); s.msg = gp.name + " 님을 귀가 처리하고 " + P(fill).name + " 님으로 채웠어요"; }
+      else s.msg = gp.name + " 님을 귀가 처리했어요. 채울 대기 선수가 없어요";
+      s.sameOk = false;
+      commit({noAuto:true}); renderSelectSheet(s); break;
+    }
+    case "subOpen": { const ct = state.courts[c]; if(!ct || !ct.players) break; openSheet({type:"sub", court:c, out: id || null, in:null, after:"waiting", msg:""}); break; }
+    case "subOut": s.out = id; s.msg = ""; renderSubSheet(s); break;
+    case "subAfter": s.after = b.dataset.v; renderSubSheet(s); break;
+    case "subIn": s.in = (s.in === id ? null : id); s.msg = ""; renderSubSheet(s); break;
+    case "subRec": {
+      if(!s.out) break;
+      const ct = state.courts[s.court]; const fixed = ct.players.filter(x => x !== s.out);
+      const f = pickFill(fixed, subPool(s), P(s.out));
+      if(f){ s.in = f; s.msg = ""; } else s.msg = "추천할 대기 선수가 없어요";
+      renderSubSheet(s); break;
+    }
+    case "subDo": {
+      if(!s.out || !s.in) break;
+      const on = P(s.out).name, nn = P(s.in).name, ci = s.court, after = s.after;
+      snapshotForUndo();
+      if(!subPlayer(ci, s.out, s.in, after)){ closeSheet(); toast("교체하지 못했어요. 코트 상황을 확인해 주세요"); break; }
+      closeSheet(); commit({noAuto:true});
+      toast((ci+1) + "번 코트: " + on + " 님 대신 " + nn + " 님이 들어갔어요" + (after === "gone" ? " (" + on + " 님 귀가)" : after === "resting" ? " (" + on + " 님 휴식)" : ""), true);
+      break;
+    }
     case "unpick": s.chosen = s.chosen.filter(x => x !== id); s.msg = ""; s.sameOk = false; renderSelectSheet(s); break;
     case "sgen": s.g = b.dataset.v; renderSelectSheet(s); break;
     case "ssort": s.sort = b.dataset.v; renderSelectSheet(s); break;
@@ -1085,7 +1207,13 @@ document.addEventListener("click", e => {
     }
     case "split": splitCourt(c); commit(); break;
     case "cancel": confirmBox((c+1) + "번 코트 게임을 취소할까요?", "게임 수는 늘지 않고, 네 명은 배정 전 대기 상태로 돌아가요.", "게임 취소", () => { cancelGame(c); commit({noAuto:true}); toast("게임을 취소했어요"); }); break;
-    case "end": snapshotForUndo(); endGame(c); commit({noAuto:true}); toast((c+1) + "번 코트 게임을 종료했어요", true); break;
+    case "end": {
+      const doEnd = () => { snapshotForUndo(); endGame(c); commit({noAuto:true}); toast((c+1) + "번 코트 게임을 종료했어요", true); };
+      const el = now() - (state.courts[c].startedAt || 0);
+      if(el < 3 * 60000) confirmBox((c+1) + "번 코트 게임을 종료할까요?", "시작한 지 " + (el < 60000 ? "1분도" : Math.floor(el / 60000) + "분밖에") + " 안 됐어요. 종료하면 네 명 모두 게임 수에 1게임이 더해져요. 잘못 배정했다면 취소를 눌러 주세요.", "게임 종료", doEnd);
+      else doEnd();
+      break;
+    }
     case "courtPlus": if(state.courtCount < 12){ state.courtCount++; commit(); } break;
     case "courtMinus": {
       if(state.courtCount <= 1) break;
