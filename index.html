@@ -283,6 +283,7 @@ td.r,th.r{text-align:right}
 .slot.chip{border:none;justify-content:flex-start;padding-right:2px}
 .slot button{border:none;background:none;min-width:32px;min-height:32px;font-size:18px;line-height:1;color:var(--c100)}
 .rec{background:var(--surface-2);border-radius:var(--r-md);padding:12px;margin-bottom:12px}
+.fillrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-4px 0 12px}
 .rec .seg{flex-wrap:wrap;overflow:visible;gap:6px}
 .rec .pill{padding:0 12px}
 .rec p{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--c100)}
@@ -921,9 +922,10 @@ function renderSelectSheet(s){
     const id = s.chosen[i];
     if(!id) return '<div class="slot">' + (i+1) + '번째 선수</div>';
     const p = P(id);
-    return '<div class="slot chip ' + (p.gender==="M"?"m":"f") + '"><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span>' + (p.status !== "playing" ? '<button class="gone-btn" data-act="pickGone" data-id="' + id + '" aria-label="' + esc(p.name) + ' 귀가 처리">없음</button>' : '') + '<button data-act="unpick" data-id="' + id + '" aria-label="' + esc(p.name) + ' 빼기">×</button></div>';
+    return '<div class="slot chip ' + (p.gender==="M"?"m":"f") + '"><span class="n">' + esc(p.name) + '</span><span class="lv ' + p.level + '">' + p.level + '</span>' + '<button class="gone-btn" data-act="pickGone" data-id="' + id + '" aria-label="' + esc(p.name) + ' 이번 배정에서 빼고 다른 사람으로 채우기">없음</button>' + '<button data-act="unpick" data-id="' + id + '" aria-label="' + esc(p.name) + ' 빼기">×</button></div>';
   }).join("") + '</div>';
-  if(s.chosen.length) h += '<p class="muted" style="margin:-4px 0 12px;font-size:12px">이미 간 사람은 <b>없음</b>을 누르면 귀가 처리하고 다른 사람으로 채워요.</p>';
+  if(s.chosen.length > 0 && s.chosen.length < 4) h += '<div class="fillrow"><span class="muted num">빈자리 ' + (4 - s.chosen.length) + '개</span><button class="pill ai" data-act="fillRec">추천으로 채우기</button></div>';
+  if(s.chosen.length) h += '<p class="muted" style="margin:-4px 0 12px;font-size:12px">지금 자리에 없는 사람은 <b>없음</b>을 누르면 대기 상태 그대로 두고 이번 배정에서만 빠져요.</p>';
   h += '<div class="rec"><p>자동 추천 (오래 기다린 순)</p><div class="seg">' + MODES.map(m => '<button class="pill" data-act="rec" data-v="' + m.id + '">' + m.label + '</button>').join("") + (state.auto && state.auto.on ? '<button class="pill ai" data-act="rec" data-v="AI">AI매칭</button>' : '') + '</div></div>';
   if(s.msg) h += '<p class="note" role="alert">' + esc(s.msg) + '</p>';
   h += '<div class="seg" style="margin-bottom:8px">' +
@@ -1185,15 +1187,26 @@ document.addEventListener("click", e => {
       s.msg = msg; s.sameOk = false; renderSelectSheet(s); break;
     }
     case "pickGone": {
+      // 지금 자리에 없는 사람: 대기 상태 그대로 두고 이번 배정에서만 뺌 (채우기는 추천 버튼으로)
       const gp = P(id); if(!gp) break;
-      const k = s.chosen.indexOf(id);
-      if(!sendHome(id)){ s.msg = gp.name + " 님은 게임 중이라 귀가 처리할 수 없어요"; renderSelectSheet(s); break; }
+      const k = s.chosen.indexOf(id); if(k < 0) break;
+      s.skip = (s.skip || []).concat(id);
+      s.gaps = (s.gaps || []).concat(id);
       s.chosen.splice(k, 1);
-      const fill = pickFill(s.chosen, selectPool(s).filter(p => p.status === "waiting"), gp);
-      if(fill){ s.chosen.splice(k, 0, fill); s.msg = gp.name + " 님을 귀가 처리하고 " + P(fill).name + " 님으로 채웠어요"; }
-      else s.msg = gp.name + " 님을 귀가 처리했어요. 채울 대기 선수가 없어요";
-      s.sameOk = false;
-      commit({noAuto:true}); renderSelectSheet(s); break;
+      s.msg = gp.name + " 님은 대기로 두고 이번 배정에서 뺐어요"; s.sameOk = false;
+      renderSelectSheet(s); break;
+    }
+    case "fillRec": {
+      const pool = selectPool(s).filter(p => p.status === "waiting" && !(s.skip || []).includes(p.id));
+      const added = [];
+      while(s.chosen.length < 4){
+        const like = (s.gaps && s.gaps.length) ? P(s.gaps.shift()) : null;
+        const f = pickFill(s.chosen, pool.filter(p => !s.chosen.includes(p.id)), like);
+        if(!f) break;
+        s.chosen.push(f); added.push(P(f).name);
+      }
+      s.msg = added.length ? added.join(", ") + " 님으로 채웠어요" + (s.chosen.length < 4 ? ". 더 채울 대기 선수가 없어요" : "") : "채울 대기 선수가 없어요";
+      s.sameOk = false; renderSelectSheet(s); break;
     }
     case "subOpen": { const ct = state.courts[c]; if(!ct || !ct.players) break; openSheet({type:"sub", court:c, outs: id ? [id] : [], ins:[], after:"waiting", msg:""}); break; }
     case "subOut": { const k = s.outs.indexOf(id); if(k >= 0){ s.outs.splice(k, 1); s.ins.splice(k, 1); } else s.outs.push(id); s.msg = ""; renderSubSheet(s); break; }
@@ -1233,14 +1246,14 @@ document.addEventListener("click", e => {
     case "sgen": s.g = b.dataset.v; renderSelectSheet(s); break;
     case "ssort": s.sort = b.dataset.v; renderSelectSheet(s); break;
     case "rec": {
-      const pool = selectPool(s).filter(p => p.status === "waiting");
+      const pool = selectPool(s).filter(p => p.status === "waiting" && !(s.skip || []).includes(p.id));
       let res;
       if(b.dataset.v === "AI"){
         const ids = autoPick(pool, (state.auto && state.auto.style) || "balance");
         const n = pool.filter(p => !coachCapped(p)).length;
         res = ids ? {ids, warn:""} : {err: n < 4 ? "AI매칭에 쓸 대기 선수가 부족해요 (" + n + "명)" : "함께 들어갈 4명을 맞추지 못했어요. 고정 파트너가 게임 중인지 확인해 주세요"};
       } else res = recommend(b.dataset.v, pool);
-      if(res.err){ s.msg = res.err; } else { s.chosen = res.ids; s.msg = res.warn || ""; s.sameOk = false; }
+      if(res.err){ s.msg = res.err; } else { s.chosen = res.ids; s.msg = res.warn || ""; s.sameOk = false; s.gaps = []; }
       renderSelectSheet(s); break;
     }
     case "confirmSelect": {
