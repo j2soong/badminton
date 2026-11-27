@@ -347,7 +347,7 @@ const MODES = [
 
 // ---------- 상태 ----------
 function freshState(){
-  return {v:1, updatedAt:0, courtCount:3, players:{}, courts:[], reserves:[], log:[], auto:{on:false, style:"balance"}, coach:{on:false, max:2}, alert:{wait:20, gap:2}};
+  return {v:1, updatedAt:0, courtCount:3, players:{}, courts:[], reserves:[], log:[], auto:{on:false, style:"balance"}, coach:{on:false, play:3, rest:1}, alert:{wait:20, gap:2}};
 }
 let state = freshState();
 const ui = {tab:"court", sort:"wait", g:"all", st:"all", lv:[], q:"", sheet:null, joinSel:[]};
@@ -436,13 +436,21 @@ function sendHome(id){
 function startGame(ci, ids, teams){
   const c = state.courts[ci];
   c.snap = {};
-  ids.forEach(id => { const p = P(id); c.snap[id] = {status:p.status, waitTotal:p.waitTotal, waitSince:p.waitSince}; stopWait(p); p.status = "playing"; });
+  ids.forEach(id => { const p = P(id); c.snap[id] = {status:p.status, waitTotal:p.waitTotal, waitSince:p.waitSince, coachRest:p.coachRest||0}; stopWait(p); p.status = "playing"; p.coachRest = 0; });
+  c.coachDec = [];
+  if(coachCfg().on) present().forEach(p => {
+    if(p.level === "S" && !ids.includes(p.id) && p.status === "waiting" && (p.coachRest||0) > 0){ p.coachRest--; c.coachDec.push(p.id); }
+  });
   c.players = ids.slice(); c.teams = teams || null; c.teamIdx = 0; c.startedAt = now(); c.hold = false; c.auto = false;
 }
 function endGame(ci){
   const c = state.courts[ci]; if(!c.players) return;
   const key = groupKey(c.players);
-  c.players.forEach(id => { const p = P(id); if(!p) return; p.games = (p.games||0) + 1; p.status = "waiting"; p.waitSince = now(); p.lastGroup = key; });
+  const cc = coachCfg();
+  c.players.forEach(id => {
+    const p = P(id); if(!p) return; p.games = (p.games||0) + 1; p.status = "waiting"; p.waitSince = now(); p.lastGroup = key;
+    if(cc.on && p.level === "S"){ p.coachStreak = (p.coachStreak||0) + 1; if(p.coachStreak >= cc.play){ p.coachRest = cc.rest; p.coachStreak = 0; } }
+  });
   state.log.unshift({court:ci+1, players:c.players.slice(), teams:c.teams, start:c.startedAt, end:now()});
   if(state.log.length > 300) state.log.length = 300;
   c.players = null; c.teams = null; c.snap = null; c.startedAt = 0; c.auto = false;
@@ -450,6 +458,9 @@ function endGame(ci){
 }
 function cancelGame(ci){
   const c = state.courts[ci]; if(!c.players) return;
+  (c.coachDec || []).forEach(id => { const q = P(id); if(q) q.coachRest = (q.coachRest||0) + 1; });
+  c.coachDec = [];
+  c.players.forEach(id => { const q = P(id), sn = c.snap && c.snap[id]; if(q && sn) q.coachRest = sn.coachRest || 0; });
   c.players.forEach(id => {
     const p = P(id); if(!p) return; const s = c.snap && c.snap[id];
     if(s){ p.status = s.status === "playing" ? "waiting" : s.status; p.waitTotal = s.waitTotal; p.waitSince = s.status === "waiting" ? s.waitSince : (p.status === "waiting" ? now() : null); }
@@ -484,7 +495,8 @@ function splitCourt(ci){
 // ---- 매칭 엔진 ----
 // 고정 파트너는 한 묶음(unit)으로 다루고, 대기 순위 + 성별 구성 + 팀 균형 + 직전 4명 중복을 점수로 비교한다
 function waitOrder(a, b){ return curWait(b) - curWait(a) || (a.games||0) - (b.games||0); }
-function coachCapped(p){ const c = state.coach; return p.level === "S" && !!c && c.on && (p.games||0) >= c.max; }
+function coachCfg(){ const c = state.coach || {}; return {on:!!c.on, play:c.play || 3, rest:c.rest || 1}; }
+function coachCapped(p){ return p.level === "S" && coachCfg().on && (p.coachRest||0) > 0; } // 코치 휴식 차례
 function matchUnits(pool){
   const inPool = new Set(pool.map(p => p.id)), used = new Set(), units = [];
   pool.slice().sort(waitOrder).forEach(p => {
@@ -664,7 +676,8 @@ function cardHTML(p, o){
   let extra = '';
   if(longWait) extra += '<span class="tag alert">오래 대기</span>';
   if(few) extra += '<span class="tag few">게임 적음</span>';
-  if(coachCapped(p)) extra += '<span class="tag">코치 한도</span>';
+  if(coachCapped(p)) extra += '<span class="tag">코치 휴식 ' + p.coachRest + '게임</span>';
+  else if(p.level === "S" && coachCfg().on && p.status !== "gone") extra += '<span class="tag">' + (p.coachStreak||0) + '/' + coachCfg().play + '게임</span>';
   if(mate) extra += '<span class="tag pair">짝 ' + esc(mate.name) + '</span>';
   const waitTxt = p.status === "waiting" ? '대기 ' + fmtMin(curWait(p)) : (p.status === "playing" ? '게임 중' : p.status === "late" ? '도착 전' : '휴식 중');
   return '<button class="pcard ' + (p.gender === "M" ? "m" : "f") + (longWait ? " alert" : "") + (o.sel ? " sel" : "") + (o.dim ? " dim" : "") + '" data-act="' + o.act + '" data-id="' + p.id + '"' + (o.dim ? ' aria-disabled="true"' : "") + (o.sel !== undefined ? ' aria-pressed="' + (!!o.sel) + '"' : "") + '>' +
@@ -726,9 +739,12 @@ function renderPlayersTab(){
 }
 function renderRecordTab(){
   let h = '<h2>코트 수</h2><div class="stepper"><span class="lab">사용할 코트</span><button class="btn" data-act="courtMinus" aria-label="코트 줄이기">−</button><span class="v num">' + state.courtCount + '</span><button class="btn" data-act="courtPlus" aria-label="코트 늘리기">+</button></div>';
-  const co = state.coach || {on:false, max:2}, al = state.alert || {wait:20, gap:2};
-  h += '<h2>코치 게임 수</h2><div class="setbox"><div class="autorow"><div class="t"><strong id="coachLbl">코치(S급) 게임 수 제한</strong><small>한도에 닿으면 자동 매칭과 추천에서 빠져요. 직접 배정은 할 수 있어요</small></div><button class="switch" role="switch" aria-checked="' + co.on + '" aria-labelledby="coachLbl" data-act="coachToggle"></button></div>';
-  if(co.on) h += '<div class="minirow"><span style="flex:1;font-weight:600">하루 최대</span><button class="btn" data-act="coachMinus" aria-label="줄이기">−</button><span class="v num">' + co.max + '게임</span><button class="btn" data-act="coachPlus" aria-label="늘리기">+</button></div>';
+  const co = coachCfg(), al = state.alert || {wait:20, gap:2};
+  h += '<h2>코치 순환 휴식</h2><div class="setbox"><div class="autorow"><div class="t"><strong id="coachLbl">코치(S급) 뛰고 쉬기</strong><small>' + co.play + '게임 연속으로 뛰면 다음 ' + co.rest + '게임은 자동 매칭과 추천에서 빠져요. 직접 배정은 할 수 있어요</small></div><button class="switch" role="switch" aria-checked="' + co.on + '" aria-labelledby="coachLbl" data-act="coachToggle"></button></div>';
+  if(co.on){
+    h += '<div class="minirow"><span style="flex:1;font-weight:600">뛰기</span><button class="btn" data-act="coachPlay" data-v="-1" aria-label="뛰는 게임 줄이기">−</button><span class="v num">' + co.play + '게임</span><button class="btn" data-act="coachPlay" data-v="1" aria-label="뛰는 게임 늘리기">+</button></div>';
+    h += '<div class="minirow"><span style="flex:1;font-weight:600">그다음 쉬기</span><button class="btn" data-act="coachRestN" data-v="-1" aria-label="쉬는 게임 줄이기">−</button><span class="v num">' + co.rest + '게임</span><button class="btn" data-act="coachRestN" data-v="1" aria-label="쉬는 게임 늘리기">+</button></div>';
+  }
   h += '</div>';
   h += '<h2>카드 강조</h2><div class="setbox"><div class="sub" style="margin-top:0">오래 대기 <span class="tag alert">빨간 테두리</span></div><div class="seg" role="group" aria-label="오래 대기 기준">' +
     [10,15,20,30].map(m => '<button class="pill" data-act="alertWait" data-v="' + m + '" aria-pressed="' + (al.wait === m) + '">' + m + '분 이상</button>').join("") + '</div>' +
@@ -963,9 +979,9 @@ document.addEventListener("click", e => {
     case "partnerSet": openSheet({type:"partner", id, q:""}); break;
     case "partnerPick": { const me = s.id; setPartner(me, id); closeSheet(); commit(); toast(P(me).name + " 님과 " + P(id).name + " 님을 고정 파트너로 묶었어요"); break; }
     case "partnerClear": { const mate = P(id).partner && P(P(id).partner); clearPartner(id); if(ui.sheet) closeSheet(); commit(); toast(P(id).name + (mate ? " 님과 " + mate.name : "") + " 님의 고정 파트너를 해제했어요"); break; }
-    case "coachToggle": if(!state.coach) state.coach = {on:false, max:2}; state.coach.on = !state.coach.on; commit(); break;
-    case "coachMinus": if(state.coach.max > 0){ state.coach.max--; commit(); } break;
-    case "coachPlus": if(state.coach.max < 20){ state.coach.max++; commit(); } break;
+    case "coachToggle": state.coach = Object.assign({}, coachCfg(), {on: !coachCfg().on}); commit(); break;
+    case "coachPlay": { const cf = coachCfg(); state.coach = Object.assign({}, state.coach, {play: Math.min(10, Math.max(1, cf.play + (+b.dataset.v))), rest: cf.rest}); commit(); break; }
+    case "coachRestN": { const cf = coachCfg(); state.coach = Object.assign({}, state.coach, {rest: Math.min(5, Math.max(1, cf.rest + (+b.dataset.v))), play: cf.play}); commit(); break; }
     case "alertWait": if(!state.alert) state.alert = {wait:20, gap:2}; state.alert.wait = +b.dataset.v; commit(); break;
     case "alertGap": if(!state.alert) state.alert = {wait:20, gap:2}; state.alert.gap = +b.dataset.v; commit(); break;
     case "lateSet": openSheet({type:"late", ids:[id], fromJoin:false}); break;
@@ -1023,7 +1039,7 @@ document.addEventListener("click", e => {
           if(selectPool(s).some(x => x.id === mate.id) && s.chosen.length < 4){ s.chosen.push(mate.id); msg = "고정 파트너 " + mate.name + " 님도 함께 넣었어요"; }
           else if(mate.status !== "gone") msg = "고정 파트너 " + mate.name + " 님은 지금 함께 넣을 수 없어요";
         }
-        if(coachCapped(pp)) msg = (msg ? msg + ". " : "") + pp.name + " 님은 오늘 코치 게임 한도에 닿았어요";
+        if(coachCapped(pp)) msg = (msg ? msg + ". " : "") + pp.name + " 님은 지금 코치 휴식 차례예요";
       } else { s.msg = "4명을 모두 골랐어요. 바꾸려면 위에서 한 명을 빼 주세요"; renderSelectSheet(s); break; }
       s.msg = msg; s.sameOk = false; renderSelectSheet(s); break;
     }
@@ -1081,7 +1097,7 @@ document.addEventListener("click", e => {
       const playing = state.courts.filter(x => x.players).length;
       confirmBox("하루 초기화할까요?", (playing ? "진행 중인 " + playing + "게임은 기록 없이 끝나요. " : "") + "게임 수, 대기시간, 기록, 예약이 모두 지워지고 선수는 저장된 선수로 이동해요.", "초기화", () => {
         snapshotForUndo();
-        Object.values(state.players).forEach(p => { p.games = 0; p.waitTotal = 0; p.waitSince = null; p.status = "gone"; p.lastGroup = ""; p.lateAt = ""; });
+        Object.values(state.players).forEach(p => { p.games = 0; p.waitTotal = 0; p.waitSince = null; p.status = "gone"; p.lastGroup = ""; p.lateAt = ""; p.coachStreak = 0; p.coachRest = 0; });
         state.courts = []; state.reserves = []; state.log = [];
         commit(); toast("하루 초기화를 마쳤어요", true);
       }, true);
